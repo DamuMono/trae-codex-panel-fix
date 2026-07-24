@@ -1,0 +1,31 @@
+# Runtime backups generated beside installed extensions
+.trae-ai-panel-backup/
+**/.trae-ai-panel-backup/
+
+# Temporary patch files
+*.trae-fix.tmp.json
+*.trae-fix.tmp.js
+*.tmp
+*.bak
+*.backup
+
+# Logs and diagnostics
+*.log
+*.dmp
+logs/
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.pfx
+*.p12
+
+# Common local metadata
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+node_modules/
