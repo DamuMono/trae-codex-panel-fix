@@ -1,13 +1,20 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
-  [string]$ExtensionsRoot = (Join-Path $env:USERPROFILE '.trae-cn\extensions'),
+  [string]$ExtensionsRoot = '',
   [string]$CodexPath = '',
   [string]$ClaudePath = '',
+  [string]$TraeExe = '',
+  [switch]$ForceTraeRuntime,
   [switch]$VerifyOnly
 )
 
 $ErrorActionPreference = 'Stop'
-$PatchId = 'trae-ai-shared-right-group-v4'
+$PatchId = 'trae-ai-shared-right-group-v7'
+try {
+  [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+  [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+  $OutputEncoding = [Console]::OutputEncoding
+} catch { }
 
 function Write-Utf8NoBom([string]$Path, [string]$Content) {
   [IO.File]::WriteAllText($Path, $Content, [Text.UTF8Encoding]::new($false))
@@ -17,11 +24,84 @@ function Assert-Json([string]$Path) {
   $null = [IO.File]::ReadAllText($Path) | ConvertFrom-Json
 }
 
-function Assert-JavaScript([string]$Path) {
+function Find-TraeExe([string]$ExplicitPath) {
+  if (![string]::IsNullOrWhiteSpace($ExplicitPath)) {
+    $trimmed = $ExplicitPath.Trim().Trim('"')
+    if (!(Test-Path -LiteralPath $trimmed -PathType Leaf)) { throw "指定的 TRAE 主程序不存在：$trimmed" }
+    $resolved = (Resolve-Path -LiteralPath $trimmed).Path
+    if ([IO.Path]::GetFileName($resolved) -notin @('Trae.exe', 'Trae CN.exe')) { throw "不支持的主程序名称：$resolved。只接受 Trae.exe 或 Trae CN.exe。" }
+    return $resolved
+  }
+
+  # 支持国际版/国内版；修复文件可位于主程序同级或下一级 helpAI。
+  $roots = @($PSScriptRoot, (Split-Path -Parent $PSScriptRoot), (Get-Location).Path) | Select-Object -Unique
+  $candidates = foreach ($root in $roots) {
+    Join-Path $root 'Trae.exe'
+    Join-Path $root 'Trae CN.exe'
+  }
+  $found = @()
+  foreach ($candidate in $candidates) {
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { $found += (Resolve-Path -LiteralPath $candidate).Path }
+  }
+  $found = @($found | Select-Object -Unique)
+  if ($found.Count -eq 1) { return $found[0] }
+  if ($found.Count -gt 1) { throw "发现多个 TRAE 主程序，无法安全选择。请通过 -TraeExe 指定其中一个：$($found -join '；')" }
+  return ''
+}
+
+function Get-TraeProduct([string]$ExePath) {
+  if ([string]::IsNullOrWhiteSpace($ExePath)) { throw '未提供 TRAE 主程序。' }
+  $installRoot = Split-Path -Parent $ExePath
+  $productPath = Join-Path $installRoot 'resources\app\product.json'
+  if (!(Test-Path -LiteralPath $productPath -PathType Leaf)) { throw "无法验证 TRAE 安装：缺少 $productPath" }
+  $product = [IO.File]::ReadAllText($productPath) | ConvertFrom-Json
+  if ([string]::IsNullOrWhiteSpace([string]$product.dataFolderName)) { throw "TRAE 产品信息缺少 dataFolderName：$productPath" }
+  return [pscustomobject]@{
+    Name = if ($product.nameLong) { [string]$product.nameLong } else { [IO.Path]::GetFileNameWithoutExtension($ExePath) }
+    DataFolderName = [string]$product.dataFolderName
+    ExtensionsRoot = Join-Path (Join-Path $env:USERPROFILE ([string]$product.dataFolderName)) 'extensions'
+  }
+}
+
+function Get-JavaScriptRuntime([string]$DetectedTraeExe, [bool]$PreferTrae) {
+  if ($PreferTrae -and ![string]::IsNullOrWhiteSpace($DetectedTraeExe)) {
+    return [pscustomobject]@{ Path = $DetectedTraeExe; Electron = $true; Label = 'TRAE 内置 Node.js' }
+  }
   $node = Get-Command node -ErrorAction SilentlyContinue
-  if (!$node) { throw '未找到 node，无法执行 JavaScript 语法验证。' }
-  & $node.Source --check $Path
-  if ($LASTEXITCODE -ne 0) { throw "JavaScript 语法验证失败：$Path" }
+  if ($node) { return [pscustomobject]@{ Path = $node.Source; Electron = $false; Label = '系统 Node.js' } }
+  if (![string]::IsNullOrWhiteSpace($DetectedTraeExe)) {
+    return [pscustomobject]@{ Path = $DetectedTraeExe; Electron = $true; Label = 'TRAE 内置 Node.js' }
+  }
+  throw '既未找到系统 Node.js，也未找到 TRAE 主程序。请将两个修复文件放到 Trae.exe/Trae CN.exe 同级或下一级 helpAI，或通过 -TraeExe 指定主程序。'
+}
+
+function Test-TraeRunning([string]$DetectedTraeExe) {
+  if ([string]::IsNullOrWhiteSpace($DetectedTraeExe)) { return $false }
+  $target = [IO.Path]::GetFullPath($DetectedTraeExe)
+  foreach ($process in @(Get-Process -Name @('Trae', 'Trae CN') -ErrorAction SilentlyContinue)) {
+    try {
+      if ([IO.Path]::GetFullPath($process.Path) -eq $target) { return $true }
+    } catch { }
+  }
+  return $false
+}
+
+function Assert-JavaScript([string]$Path) {
+  $oldElectronMode = [Environment]::GetEnvironmentVariable('ELECTRON_RUN_AS_NODE', 'Process')
+  try {
+    if ($Script:JavaScriptRuntime.Electron) { $env:ELECTRON_RUN_AS_NODE = '1' }
+    if ($Script:JavaScriptRuntime.Electron) {
+      $process = Start-Process -FilePath $Script:JavaScriptRuntime.Path -ArgumentList @('--check', $Path) -Wait -PassThru -NoNewWindow
+      $exitCode = $process.ExitCode
+    } else {
+      & $Script:JavaScriptRuntime.Path --check $Path
+      $exitCode = $LASTEXITCODE
+    }
+    if ($exitCode -ne 0) { throw "JavaScript 语法验证失败（退出码 $exitCode）：$Path" }
+  } finally {
+    if ($null -eq $oldElectronMode) { [Environment]::SetEnvironmentVariable('ELECTRON_RUN_AS_NODE', $null, 'Process') }
+    else { [Environment]::SetEnvironmentVariable('ELECTRON_RUN_AS_NODE', $oldElectronMode, 'Process') }
+  }
 }
 
 function Get-Version([string]$Path) {
@@ -112,6 +192,10 @@ function Move-ViewContainerToActivityBar($Package, [string]$ContainerId, [string
   return $changed
 }
 
+$TraeExe = Find-TraeExe $TraeExe
+$TraeProduct = Get-TraeProduct $TraeExe
+if ([string]::IsNullOrWhiteSpace($ExtensionsRoot)) { $ExtensionsRoot = $TraeProduct.ExtensionsRoot }
+$Script:JavaScriptRuntime = Get-JavaScriptRuntime $TraeExe $ForceTraeRuntime.IsPresent
 $CodexPath = Find-Extension $CodexPath 'openai.chatgpt-*' 'Codex'
 $ClaudePath = Find-Extension $ClaudePath 'anthropic.claude-code-*' 'Claude Code'
 $codexPackagePath = Join-Path $CodexPath 'package.json'
@@ -132,17 +216,25 @@ $codexJs = [IO.File]::ReadAllText($codexJsPath)
 $claudeJs = [IO.File]::ReadAllText($claudeJsPath)
 
 Write-Host "TRAE 扩展目录：$ExtensionsRoot"
+Write-Host "TRAE 版本类型：$($TraeProduct.Name)（数据目录 $($TraeProduct.DataFolderName)）"
+Write-Host "TRAE 主程序：$TraeExe"
+Write-Host "语法验证运行时：$($Script:JavaScriptRuntime.Label)"
 Write-Host "Codex：$($codexPackage.version)  $CodexPath"
 Write-Host "Claude：$($claudePackage.version)  $ClaudePath"
+if (Test-TraeRunning $TraeExe) {
+  Write-Warning '检测到 TRAE 正在运行。脚本可以完成落盘验证，但必须重启 TRAE 或重新加载窗口后，新补丁才会生效。'
+}
 
 # Codex：优先复用已有 Codex/Claude 编辑器组；首次没有 AI 标签时才在右侧拆分。
 # 不传 initialRoute，Codex 使用扩展默认首页（任务历史），而不是 /extension/panel/new 空白会话。
 $codexOld = @(
+  'async createNewPanel(){let e=ST("/extension/panel/new"),r=ke.window.activeTextEditor?.viewColumn??ke.ViewColumn.Active;await ke.commands.executeCommand("vscode.openWith",e,t.customEditorViewType,{viewColumn:r,preserveFocus:!1,preview:!1})}',
   'async createNewPanel(){let e=CA("/extension/panel/new"),r=Pe.window.activeTextEditor?.viewColumn??Pe.ViewColumn.Active;await Pe.commands.executeCommand("vscode.openWith",e,t.customEditorViewType,{viewColumn:r,preserveFocus:!1,preview:!1})}',
   'async createNewPanel(){await this.createEditorPanel({viewColumn:Pe.ViewColumn.Beside,preserveFocus:!1,title:Pye,initialRoute:"/extension/panel/new"})}',
-  'async createNewPanel(){let e=Pe.window.tabGroups.all.find(r=>r.tabs.some(n=>{let o=n.input;return o instanceof Pe.TabInputWebview&&(o.viewType===t.panelViewType||o.viewType==="claudeVSCodePanel")})),r=e?.viewColumn??Pe.ViewColumn.Beside;await this.createEditorPanel({viewColumn:r,preserveFocus:!1,title:Pye})}'
+  'async createNewPanel(){let e=Pe.window.tabGroups.all.find(r=>r.tabs.some(n=>{let o=n.input;return o instanceof Pe.TabInputWebview&&(o.viewType===t.panelViewType||o.viewType==="claudeVSCodePanel")})),r=e?.viewColumn??Pe.ViewColumn.Beside;await this.createEditorPanel({viewColumn:r,preserveFocus:!1,title:Pye})}',
+  'async createNewPanel(){let e=Pe.window.tabGroups.all.find(r=>r.tabs.some(n=>{let o=n.input;return o instanceof Pe.TabInputWebview&&(o.viewType===t.panelViewType||o.viewType.includes("claudeVSCodePanel"))})),r=e?.viewColumn??Pe.ViewColumn.Beside;await this.createEditorPanel({viewColumn:r,preserveFocus:!1,title:Pye})}'
 )
-$codexNew = 'async createNewPanel(){let e=Pe.window.tabGroups.all.find(r=>r.tabs.some(n=>{let o=n.input;return o instanceof Pe.TabInputWebview&&(o.viewType===t.panelViewType||o.viewType.includes("claudeVSCodePanel"))})),r=e?.viewColumn??Pe.ViewColumn.Beside;await this.createEditorPanel({viewColumn:r,preserveFocus:!1,title:Pye})}'
+$codexNew = 'async createNewPanel(){let e=ke.window.tabGroups.all.find(r=>r.tabs.some(n=>{let o=n.input;return o instanceof ke.TabInputWebview&&o.viewType.includes("claudeVSCodePanel")||o instanceof ke.TabInputCustom&&o.viewType===t.customEditorViewType})),r=e?.viewColumn??ke.ViewColumn.Beside,n=ST("/extension/panel/new");await ke.commands.executeCommand("vscode.openWith",n,t.customEditorViewType,{viewColumn:r,preserveFocus:!1,preview:!1})}'
 $codexResult = Replace-One $codexJs $codexOld $codexNew 'Codex createNewPanel'
 $codexJs = $codexResult.Content
 $codexPackageChanged = Set-CommandIcon $codexPackage 'chatgpt.newCodexPanel' 'resources/blossom-black.svg' 'resources/blossom-white.svg'
@@ -150,9 +242,12 @@ $codexPackageChanged = (Set-EditorTitleCommand $codexPackage 'chatgpt.openSideba
 $codexPackageChanged = (Move-ViewContainerToActivityBar $codexPackage 'codexSecondaryViewContainer' 'Codex') -or $codexPackageChanged
 
 # Claude：原实现只复用“全是 Claude 标签”的组；改为复用含 Codex 或 Claude Webview 的共享组。
-$claudeOld = 'let a=Tt.window.tabGroups.all.find((c)=>{if(c.tabs.length===0)return!1;return c.tabs.every((l)=>{if(l.input instanceof Tt.TabInputWebview)return l.input.viewType.includes("claudeVSCodePanel");return!1})});if(a&&a.viewColumn)i=a.viewColumn;else i=this.findUnusedColumn(),n=!0'
-$claudeNew = 'let a=Tt.window.tabGroups.all.find(c=>c.tabs.some(l=>{let u=l.input;return u instanceof Tt.TabInputWebview&&(u.viewType.includes("claudeVSCodePanel")||u.viewType==="chatgpt.panelView")}));if(a&&a.viewColumn)i=a.viewColumn;else i=Tt.ViewColumn.Beside,n=!0'
-$claudeResult = Replace-One $claudeJs @($claudeOld) $claudeNew 'Claude createPanel'
+$claudeOld = @(
+  'let a=Tt.window.tabGroups.all.find((c)=>{if(c.tabs.length===0)return!1;return c.tabs.every((l)=>{if(l.input instanceof Tt.TabInputWebview)return l.input.viewType.includes("claudeVSCodePanel");return!1})});if(a&&a.viewColumn)i=a.viewColumn;else i=this.findUnusedColumn(),n=!0',
+  'let a=Tt.window.tabGroups.all.find(c=>c.tabs.some(l=>{let u=l.input;return u instanceof Tt.TabInputWebview&&(u.viewType.includes("claudeVSCodePanel")||u.viewType==="chatgpt.panelView")}));if(a&&a.viewColumn)i=a.viewColumn;else i=Tt.ViewColumn.Beside,n=!0'
+)
+$claudeNew = 'let a=Tt.window.tabGroups.all.find(c=>c.tabs.some(l=>{let u=l.input;return u instanceof Tt.TabInputWebview&&u.viewType.includes("claudeVSCodePanel")||u instanceof Tt.TabInputCustom&&u.viewType==="chatgpt.conversationEditor"}));if(a&&a.viewColumn)i=a.viewColumn;else i=Tt.ViewColumn.Beside,n=!0'
+$claudeResult = Replace-One $claudeJs $claudeOld $claudeNew 'Claude createPanel'
 $claudeJs = $claudeResult.Content
 $claudePackageChanged = Move-ViewContainerToActivityBar $claudePackage 'claude-sidebar-secondary' 'Claude'
 
@@ -169,7 +264,7 @@ $verification = [ordered]@{
   codexVersion = [string]$codexPackage.version
   claudeVersion = [string]$claudePackage.version
   codexSharedGroup = $codexJs.Contains($codexNew)
-  codexFullShell = !$codexJs.Contains('initialRoute:"/extension/panel/new"')
+  codexFullShell = $codexJs.Contains('commands.executeCommand("vscode.openWith"')
   claudeSharedGroup = $claudeJs.Contains($claudeNew)
   codexMenuNewPanelOnce = (@($codexEditorTitle | Where-Object command -eq 'chatgpt.newCodexPanel').Count -eq 1)
   codexMenuOldSidebarAbsent = (@($codexEditorTitle | Where-Object command -eq 'chatgpt.openSidebar').Count -eq 0)

@@ -1,6 +1,6 @@
 # TRAE Codex + Claude 右侧标签修复
 
-这是一个面向 Windows 版 TRAE CN 的本地补丁工具，用于调整 Codex 与 Claude Code 扩展的面板入口和标签分组行为。
+这是一个面向 Windows 版 TRAE 的本地补丁工具，用于调整 Codex 与 Claude Code 扩展的面板入口和标签分组行为。它兼容国际版 `Trae.exe` 与国内版 `Trae CN.exe`。
 
 ## 功能
 
@@ -13,6 +13,9 @@
 - 修改前验证 JSON 和 JavaScript 语法，修改后再次验证。
 - 支持幂等运行和 `-VerifyOnly` 只验证模式。
 - 修改失败时自动用本次运行前创建的本地备份回滚。
+- 自动识别国际版与国内版的用户数据目录，并选择对应的扩展目录。
+- 不依赖系统安装的 Node.js，优先使用 TRAE 主程序自带的运行时进行语法验证。
+- 支持将两个修复文件放在主程序同级或下一级 `helpAI` 目录；无法自动识别时可粘贴主程序完整路径。
 
 ## 原理
 
@@ -30,29 +33,30 @@
 ### 前提
 
 - Windows 10 或 Windows 11。
-- 已安装 TRAE CN、Codex 扩展和 Claude Code 扩展。
-- `node` 命令可用。TRAE 自带运行时不一定会自动加入终端的 `PATH`；如命令不可用，请先安装 Node.js 或将可用的 Node.js 加入 `PATH`。
+- 已安装国际版 TRAE 或国内版 TRAE CN，以及 Codex、Claude Code 扩展。
+- 无需单独安装 Node.js；脚本会使用所选 TRAE 主程序内置的运行时。
 
 ### 一键运行
 
 1. 下载本仓库中的两个脚本，并放在同一目录。
-2. 退出正在运行的相关扩展任务，建议先关闭 TRAE。
+2. 将它们放在 `Trae.exe` 或 `Trae CN.exe` 同级目录，或放在该目录下的 `helpAI` 文件夹。
 3. 双击 `一键修复TRAE-AI右侧标签.cmd`。
-4. 成功后打开 TRAE，执行命令“开发人员: 重新加载窗口”。
+4. 如无法自动识别主程序，按提示粘贴 `Trae.exe` 或 `Trae CN.exe` 的完整路径。
+5. 成功后重启 TRAE，或执行命令“开发人员: 重新加载窗口”。
 
 ### PowerShell 运行
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\fix-trae-ai-panels.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\fix-trae-ai-panels.ps1 -TraeExe 'C:\Program Files\Trae\Trae.exe' -ForceTraeRuntime
 ```
 
 仅检查当前最新版扩展是否已处于目标状态：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\fix-trae-ai-panels.ps1 -VerifyOnly
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\fix-trae-ai-panels.ps1 -TraeExe 'C:\Program Files\Trae\Trae.exe' -ForceTraeRuntime -VerifyOnly
 ```
 
-如果扩展安装在其他目录，可明确指定根目录或两个扩展目录：
+如需覆盖自动识别的扩展目录，可明确指定根目录或两个扩展目录：
 
 ```powershell
 .\fix-trae-ai-panels.ps1 -ExtensionsRoot '扩展根目录'
@@ -63,13 +67,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\fix-trae-ai-panels.ps1
 
 ## 支持版本
 
-脚本按扩展目录中的 `package.json` 版本号选择最新版，不绑定 TRAE 的固定版本号。当前补丁仅支持同时满足以下结构的版本：
+脚本读取所选主程序安装目录的 `product.json`，自动识别用户数据目录及扩展目录：国际版通常为 `.trae`，国内版通常为 `.trae-cn`。随后按扩展目录中的 `package.json` 版本号选择最新版，不绑定 TRAE 的固定版本号。当前补丁仅支持同时满足以下结构的版本：
 
 - Codex 扩展 ID 目录匹配 `openai.chatgpt-*`，入口为 `out/extension.js`。
 - Claude Code 扩展 ID 目录匹配 `anthropic.claude-code-*`，入口为 `extension.js`。
 - 打包代码与脚本内列出的兼容片段一致。
 
-扩展升级可能改变打包代码。遇到不兼容版本时，脚本会以“无法唯一识别兼容代码”等错误停止。停止是安全保护，不代表可以强行跳过验证。提交兼容性报告时，请只提供 TRAE、Codex、Claude Code 的版本号和脱敏后的错误信息。
+扩展升级可能改变打包代码。遇到不兼容版本时，脚本会以“无法唯一识别兼容代码”等错误停止。停止是安全保护，不代表可以强行跳过验证。无法承诺未来所有未知版本永久兼容；提交兼容性报告时，请只提供 TRAE、Codex、Claude Code 的版本号和脱敏后的错误信息。
 
 ## 扩展更新后
 
