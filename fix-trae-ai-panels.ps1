@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [string]$ExtensionsRoot = '',
   [string]$CodexPath = '',
@@ -9,7 +9,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$PatchId = 'trae-ai-shared-right-group-v7'
+$PatchId = 'trae-ai-shared-right-group-v8'
 try {
   [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
   [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
@@ -228,13 +228,14 @@ if (Test-TraeRunning $TraeExe) {
 # Codex：优先复用已有 Codex/Claude 编辑器组；首次没有 AI 标签时才在右侧拆分。
 # 不传 initialRoute，Codex 使用扩展默认首页（任务历史），而不是 /extension/panel/new 空白会话。
 $codexOld = @(
+  'async createNewPanel(){let e=ke.window.tabGroups.all.find(r=>r.tabs.some(n=>{let o=n.input;return o instanceof ke.TabInputWebview&&o.viewType.includes("claudeVSCodePanel")||o instanceof ke.TabInputCustom&&o.viewType===t.customEditorViewType})),r=e?.viewColumn??ke.ViewColumn.Beside,n=ST("/extension/panel/new");await ke.commands.executeCommand("vscode.openWith",n,t.customEditorViewType,{viewColumn:r,preserveFocus:!1,preview:!1})}',
   'async createNewPanel(){let e=ST("/extension/panel/new"),r=ke.window.activeTextEditor?.viewColumn??ke.ViewColumn.Active;await ke.commands.executeCommand("vscode.openWith",e,t.customEditorViewType,{viewColumn:r,preserveFocus:!1,preview:!1})}',
   'async createNewPanel(){let e=CA("/extension/panel/new"),r=Pe.window.activeTextEditor?.viewColumn??Pe.ViewColumn.Active;await Pe.commands.executeCommand("vscode.openWith",e,t.customEditorViewType,{viewColumn:r,preserveFocus:!1,preview:!1})}',
   'async createNewPanel(){await this.createEditorPanel({viewColumn:Pe.ViewColumn.Beside,preserveFocus:!1,title:Pye,initialRoute:"/extension/panel/new"})}',
   'async createNewPanel(){let e=Pe.window.tabGroups.all.find(r=>r.tabs.some(n=>{let o=n.input;return o instanceof Pe.TabInputWebview&&(o.viewType===t.panelViewType||o.viewType==="claudeVSCodePanel")})),r=e?.viewColumn??Pe.ViewColumn.Beside;await this.createEditorPanel({viewColumn:r,preserveFocus:!1,title:Pye})}',
   'async createNewPanel(){let e=Pe.window.tabGroups.all.find(r=>r.tabs.some(n=>{let o=n.input;return o instanceof Pe.TabInputWebview&&(o.viewType===t.panelViewType||o.viewType.includes("claudeVSCodePanel"))})),r=e?.viewColumn??Pe.ViewColumn.Beside;await this.createEditorPanel({viewColumn:r,preserveFocus:!1,title:Pye})}'
 )
-$codexNew = 'async createNewPanel(){let e=ke.window.tabGroups.all.find(r=>r.tabs.some(n=>{let o=n.input;return o instanceof ke.TabInputWebview&&o.viewType.includes("claudeVSCodePanel")||o instanceof ke.TabInputCustom&&o.viewType===t.customEditorViewType})),r=e?.viewColumn??ke.ViewColumn.Beside,n=ST("/extension/panel/new");await ke.commands.executeCommand("vscode.openWith",n,t.customEditorViewType,{viewColumn:r,preserveFocus:!1,preview:!1})}'
+$codexNew = 'async createNewPanel(){let e=ke.window.tabGroups.all.find(r=>r.tabs.some(n=>{let o=n.input;return o instanceof ke.TabInputWebview&&(o.viewType===t.panelViewType||o.viewType.includes("claudeVSCodePanel"))||o instanceof ke.TabInputCustom&&o.viewType===t.customEditorViewType})),r=e?.viewColumn??ke.ViewColumn.Beside;await this.createEditorPanel({viewColumn:r,preserveFocus:!1,title:KSe})}'
 $codexResult = Replace-One $codexJs $codexOld $codexNew 'Codex createNewPanel'
 $codexJs = $codexResult.Content
 $codexPackageChanged = Set-CommandIcon $codexPackage 'chatgpt.newCodexPanel' 'resources/blossom-black.svg' 'resources/blossom-white.svg'
@@ -264,7 +265,7 @@ $verification = [ordered]@{
   codexVersion = [string]$codexPackage.version
   claudeVersion = [string]$claudePackage.version
   codexSharedGroup = $codexJs.Contains($codexNew)
-  codexFullShell = $codexJs.Contains('commands.executeCommand("vscode.openWith"')
+  codexFullShell = $codexJs.Contains('createEditorPanel({viewColumn:r,preserveFocus:!1,title:KSe})')
   claudeSharedGroup = $claudeJs.Contains($claudeNew)
   codexMenuNewPanelOnce = (@($codexEditorTitle | Where-Object command -eq 'chatgpt.newCodexPanel').Count -eq 1)
   codexMenuOldSidebarAbsent = (@($codexEditorTitle | Where-Object command -eq 'chatgpt.openSidebar').Count -eq 0)

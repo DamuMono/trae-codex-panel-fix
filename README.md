@@ -1,6 +1,6 @@
 # TRAE Codex + Claude 右侧标签修复
 
-这是一个面向 Windows 版 TRAE 的本地补丁工具，用于调整 Codex 与 Claude Code 扩展的面板入口和标签分组行为。它兼容国际版 `Trae.exe` 与国内版 `Trae CN.exe`。
+这是一个面向 Windows 版 TRAE 的本地补丁工具，用于调整 Codex 与 Claude Code 扩展的面板入口和标签分组行为。当前发布为 v8，兼容国际版 `Trae.exe` 与国内版 `Trae CN.exe`。
 
 ## 功能
 
@@ -9,6 +9,7 @@
 - 新建 Codex 面板时，优先复用已有 Codex/Claude 编辑器组。
 - 新建 Claude 面板时，优先复用已有 Codex/Claude 编辑器组。
 - 在没有可复用分组时，在当前编辑器旁打开面板。
+- 使用 Codex 原生 Webview 面板创建流程，避免自定义编辑器入口导致的空白标签页。
 - 保留 Codex 默认首页，而不是强制进入空白新会话路由。
 - 修改前验证 JSON 和 JavaScript 语法，修改后再次验证。
 - 支持幂等运行和 `-VerifyOnly` 只验证模式。
@@ -73,7 +74,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\fix-trae-ai-panels.ps1
 - Claude Code 扩展 ID 目录匹配 `anthropic.claude-code-*`，入口为 `extension.js`。
 - 打包代码与脚本内列出的兼容片段一致。
 
-扩展升级可能改变打包代码。遇到不兼容版本时，脚本会以“无法唯一识别兼容代码”等错误停止。停止是安全保护，不代表可以强行跳过验证。无法承诺未来所有未知版本永久兼容；提交兼容性报告时，请只提供 TRAE、Codex、Claude Code 的版本号和脱敏后的错误信息。
+扩展升级可能改变打包代码。脚本会根据扩展目录中的 `package.json` 选择版本号最高的已安装版本，并兼容 v8 已知的打包片段；遇到不兼容版本时，会以“无法唯一识别兼容代码”等错误停止。停止是安全保护，不代表可以强行跳过验证。无法承诺未来所有未知版本永久兼容；提交兼容性报告时，请只提供 TRAE、Codex、Claude Code 的版本号和脱敏后的错误信息。
 
 ## 扩展更新后
 
